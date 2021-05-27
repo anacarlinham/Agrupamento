@@ -1,0 +1,319 @@
+---
+title: "Métodos de agrupamento por partição."
+author: "Ana Carla Menezes"
+output:
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: true
+      smooth_scroll: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include=FALSE}
+library(raster)
+library(rgdal)
+library(rgeos)
+library(stats)
+library(factoextra)
+library(FactoMineR)
+library(cluster)
+library(readr)
+library(mclust)
+library(kableExtra)
+```
+
+```{r}
+#Bibliotecas carregadas
+# library(raster)
+# library(rgdal)
+# library(rgeos)
+# library(stats)
+# library(factoextra)
+# library(FactoMineR)
+# library(cluster)
+# library(readr)
+# library(mclust)
+# library(kableExtra)
+```
+
+```{r, include=FALSE}
+
+#https://rpubs.com/davimat/knn_no_r
+#https://www.tablesgenerator.com/#
+Fish <- read_csv("C:/Users/famil/Documents/Ana Carla UFPE/PeriodosUFPE/7P/Multivariada 2/Trabalho dois/Fish.csv")
+```
+
+## **1.** Introdução
+
+Para realizar esta atividade o conjunto de dados utilizado é um registro de 7 espécies diferentes de peixes comuns nas vendas do mercado de peixes, tais como Bream, Parkki, Perch, Pike, Roach, Smelt e Whitefish. Para cada peixe há a informação do seu peso em gramas, comprimento 1, 2 e 3 referente ao comprimento vertical, diagonal e do cruzamento em centímetros. E a altura e a largura diagonal, também em centímetros. A Fonte dessas informações foi do site Kaggle.
+
+```{r}
+
+Fish %>%
+  kbl(caption = "Base de Dados") %>%
+  kable_classic(full_width = F, html_font = "")%>% 
+  scroll_box(width = "100%", height = "300px")
+```
+
+## **2.** Objetivo
+Verificar qual é a melhor técnica de agrupamento para agrupar determinadas espécies de peixe. 
+
+
+
+
+
+```{r}
+auxFish <- Fish[,-1]
+grupos <- cbind(Fish[,1])
+grupos <- as.data.frame(grupos)
+df <- auxFish
+```
+
+
+## **3.** Métodos de Agrupamento Por Partição
+
+## **3.1.** K-means
+
+Através de uma função custo de k médias determinamos a alocação dos elementos da nossa amostra em algum grupo dos k estratos. Esse algorítimo é um dos mais utilizados, é necessário fornecer previamente o número de grupos requer se deseja obter. Os grupos são representados pelo seu centroides. Algumas desvantagens é que esse algorítimo é sensível a outliers e a chutes iniciais dos centroides e caso haja permutação dos dados, os grupos provavelmente serão diferentes.
+Para evitar deformação causadas nos grupos por conta desses possíveis outliers, etc, é factível utilizar o algorítimo PAM, que é robusto em relação a valores discrepantes. Esses agrupamentos, são feitos de tal forma que eles sejam homogêneos internamente e heterógenos entre si.
+
+```{r}
+fviz_nbclust(df, kmeans, method="wss") +
+  geom_vline(xintercept = 7, linetype = 2) +
+  labs(title = "Figura 1: Número ideal de clusters - K-mean.")
+```
+
+Através da figura 1, observamos que a partir da quantidade de grupos igual a 6 já começa a atingir uma função horizontal e que seria factível dividir em 6 grupos. Porém, como sabemos previamente que a quantidade de grupos de peixes correta é 7, então vamos optar por dividir os peixes em 7 grupos, a partir do algoritimo K-means, e observar se ele conseguiu acertar boa parte do agrupamento.
+
+```{r}
+#Agrupamento/ o melhor dentre 25 inicializacoes
+set.seed(123)
+km.res <- kmeans(df, 7, nstart=25)
+print(km.res)
+
+fviz_cluster(km.res, data = df,
+             palette=c("#00AFBB", "#FC4E07", "#2E2EFE", "#01DF01", "#00FFFF", "#A901DB", "#FFFF00"),
+             ellipse.type = "euclid", #Elise concentracao
+             star.plot =TRUE, #adiciona segmentos dos centroides para itens
+             repel = TRUE,
+             ggtheme = theme_minimal()) +
+  labs(title = "Figura 2: Grupos gerados pelo algoritimo K-meas.")
+```
+
+Na figura 2 podemos observar os grupos formados pelo método K-means.
+
+
+```{r}
+grp_km <- km.res$cluster
+grupos <- cbind(Fish[,1],grp_km)
+table(grupos$Species,grupos$grp_km)
+
+classError(grupos$Species,grupos$grp_km)
+miscl <-classError(grupos$Species,grupos$grp_km)$misclassified
+```
+
+Na tabela 1 podemos observar o agrupamento resultante.
+
+```{r}
+tabelaKmeas <- table(grupos$Species,grupos$grp_km)
+tabelaKmeas <- tabelaKmeas/rowSums(tabelaKmeas)
+tabelaKmeas <- tabelaKmeas*100
+total<- rowSums(tabelaKmeas)
+tabelaKmeas <- round(tabelaKmeas, digits = 2)
+tabelaKmeas <- as.table(tabelaKmeas)
+
+tabelaKmeas <- cbind(tabelaKmeas,total )
+colnames(tabelaKmeas)<- c("Grupo 1","Grupo 2","Grupo 3","Grupo 4","Grupo 5","Grupo 6","Grupo 7", "Total Original")
+
+tabelaKmeas %>%
+  kbl(caption = "Tabela 1: Agrupamento final (%) resultante pelo método K-means") %>% 
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+Para o agrupamento realzado pelo método k-means, obtemos uma taxa de erro de 0.5283. Logo, Os dados não foram muito bem agrupados por esse método.
+
+
+
+## **3.2.** K-medóide (PAM)
+
+É semelhante ao K-means, mas uma diferença é que ao invés de adotar os centroides como representantes dos grupos, aqui os grupos são representados pelos elementos. Ele é considerado um algorítimo mais robusto uma vez que não é sensível a outliers. Para tal método, é necessário informar previamente o número de grupos. Através do gráfico de silhueta, podemos identificar pode qual o número ótimo de grupos. 
+
+```{r}
+#head(df, n=3) 
+#determinação numero de grupos
+fviz_nbclust(df, pam, method="silhouette") +
+  theme_classic() +
+  labs(title = "Figura 3: Grupos gerados pelo algoritimo PAM.")
+```
+
+Através da figura 3, observamos que o número de grupos sugerido foi de 2 clusters. Porém, sabemos previamente que a quantidade de grupos de peixes correta é 7. E também, como posteriormente queremos comparar a alocação dos indivíduos alocados pelo algorítimo K-means com a alocação feita pelo algorítimo PAM, então vamos optar por dividir os peixes em 7 clusters, a partir do algorítimo PAM, e observar se ele conseguiu acertar boa parte do agrupamento.
+
+
+```{r}
+#Agrupamento por PAM
+pam.res <- pam(df, 7)
+print(pam.res)
+
+#Agregando ao banco
+dd <- cbind(data, cluster = pam.res$cluster)
+# head(dd, n=3)
+
+fviz_cluster(pam.res,
+             palette=c("#00AFBB", "#FC4E07", "#2E2EFE", "#01DF01", "#00FFFF", "#A901DB", "#FFFF00"),
+             ellipse.type = "t", #Elise concentracao
+             repel = TRUE,
+             ggtheme = theme_classic()) +
+  labs(title = "Figura 4: Classificação dos grupos pelo método K-medóide e algoritimo PAM.")
+```
+
+Na figura 4 podemos observar os grupos formados pelo método K-medóide e algoritimo PAM.
+
+
+```{r}
+pam.res$medoids
+grp_pam <- pam.res$cluster
+grupos <- cbind(Fish[,1],grp_km, grp_pam)
+View(grupos)
+table(grupos$Species,grupos$grp_pam)
+classError(grupos$Species,grupos$grp_pam)
+miscl <-classError(grupos$Species,grupos$grp_pam)$misclassified
+```
+
+Na tabela 2 podemos observar o agrupamento resultante.
+
+```{r}
+tabelaPAM <- table(grupos$Species,grupos$grp_pam)
+tabelaPAM <- tabelaPAM/rowSums(tabelaPAM)
+tabelaPAM <- tabelaPAM*100
+total<- rowSums(tabelaPAM)
+tabelaPAM <- round(tabelaPAM, digits = 2)
+tabelaPAM <- as.table(tabelaPAM)
+
+tabelaPAM <- cbind(tabelaPAM,total )
+colnames(tabelaPAM)<- c("Grupo 1","Grupo 2","Grupo 3","Grupo 4","Grupo 5","Grupo 6","Grupo 7", "Total Original")
+
+tabelaPAM %>%
+  kbl(caption = "Tabela 2: Agrupamento final (%) resultante pelo método K-medóide.") %>% 
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+Para o agrupamento realizado pelo método k-medóide utilizando o algoritmo PAM, obtemos uma taxa de erro de 0.5094. Logo, Os dados não foram muito bem agrupados por esse método.
+
+
+
+## **4.** Clusters baseados em Mistura
+
+
+Para realizar o agrupamento por mistura, utiliza-se da maximização da logverossimilhança. Para identificar o número de grupos que melhor representa os dados, foi proposto um critério para avaliar a quantidade de objetos gaussianos que devem caracterizar uma mistura, o BIC (Critério de Informação Bayesiana). O modelo correspondente as misturas feitas que apresentar o maior BIC será aquele que melhor modelará a divisão dos grupos. 
+
+Após as estimativas para os grupos, pode-se observar na tabela 4 que o valor máximo do BIC corresponde ao modelo gerado com 6 grupos.
+```{r}
+# ####C. Agrupamento via modelo de uma mistura finita####
+#data(wine, package="gclus")
+#View(auxFish)
+#Definindo os fatores
+Species <- factor(Fish$Species, levels=1:7,
+                  labels=c( "Bream", "Parkki", "Perch", "Pike", "Roach", "Smelt", "Whitefish"))
+# #Matriz dos dados multivariados
+ X <- data.matrix(Fish[,-1])
+# #Cluster baseada em mistura(Modelo Gaussian de mistura finita)
+library(mclust)
+mod <- Mclust(X)
+
+```
+
+```{r}
+tabelaBIC <- summary(mod$BIC)
+tabelaBIC
+tabelaBIC <- cbind(tabelaBIC[1],tabelaBIC[2],tabelaBIC[3])
+colnames(tabelaBIC) <- c("VVV,6 ",  "VVV,4", "VVV,5")
+rownames(tabelaBIC) <- c("BIC")
+tabelaBIC %>%
+  kbl(caption = "Tabela : Valores BIC") %>% 
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+Por tanto, para a redução de dimensão para cluster baseado em modelo e classificação, utilizaremos tipo de modelo de mistura: Mclust (VVV, 6).
+VVV representa mistura multivariada utilizada. Ela será um tipo de mistura elipsoidal, volume variável, forma e orientação.
+
+
+```{r}
+# #Plot dos clusters
+
+plot(mod, what = "BIC", ylim= range(mod$BIC[,-(1:2)], na.rm=TRUE),
+     legendArgs = list(x="bottomleft")) 
+#+
+ # labs(title = "Figura 5: Curvas de nível usando Kernel.")
+         
+# #Summary dos fits
+summary(mod)
+# #The fitted model providesan
+table(Fish$Species, mod$classification)
+# #>> Index is the adjusted Rand index (ARI; Hubert and Arabie, 1985),
+# # which can be used for evaluating a clustering solution
+adjustedRandIndex(Fish$Species, mod$classification)
+# #>> Applying MclustDR to the wine data example, such direction are obta
+drmod <- MclustDR(mod, lambda=1)
+summary(drmod)
+# #>> As a result, the projected data show the maximal separation
+# #among clusters, as snown in figure 4a, which is obtained with
+
+plot(drmod, what= "contour")
+# +
+#   labs(title = "Figura 6: Curvas de nível usando Kernel.")
+
+# #ON the same subspace we can also plot the uncertainty
+# #boundaries corresponding to the MAP classification
+
+plot(drmod, what= "boundaries", ngrid=200) 
+# +
+#   labs(title = "Figura 7: Bandas de confiança.")
+
+miscl <-classError(Fish$Species, mod$classification)$misclassified
+points(drmod$dir[miscl,], pch=1, cex=2)
+
+grp_mistura <- mod$classification
+grupos <- cbind(Fish[,1],grp_km, grp_pam, grp_mistura)
+table(grupos$Species, grupos$grp_mistura)
+```
+
+
+Na tabela 3 podemos observar o agrupamento resultante.
+
+```{r}
+tabelaMistura <- table(grupos$Species, grupos$grp_mistura)
+tabelaMistura <- tabelaMistura/rowSums(tabelaMistura)
+tabelaMistura <- tabelaMistura*100
+total<- rowSums(tabelaMistura)
+tabelaMistura <- round(tabelaMistura, digits = 2)
+tabelaMistura <- as.table(tabelaMistura)
+
+tabelaMistura <- cbind(tabelaMistura,total )
+colnames(tabelaMistura)<- c("Grupo 1","Grupo 2","Grupo 3","Grupo 4","Grupo 5","Grupo 6","Total Original")
+
+tabelaMistura %>%
+  kbl(caption = "Tabela 3: Agrupamento final (%) resultante pelo agrupamento baseado em mistura.") %>% 
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+Para o agrupamento realizado pelo método de agrupamento baseado em mistura, obtemos uma taxa de erro de 0.27044, observe que é bem menor do que em relação aos algoritimos K-meas e K-medóide, que tiveram um pouco mais de 50% de erro no agrupamento.
+
+## **5.** Conclusão
+
+```{r}
+Metodo <- c("K-means", "K-medóide", "Mistura")
+Erro <- c(0.5283, 0.5094, 0.2704)
+tab <- cbind(Metodo, Erro)
+colnames(tab) <- c("Método", "Taxa de Erro")
+tab %>%
+  kbl(caption = "Tabela 4: Taxa de erro por método.") %>% 
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+Para o K-means a taxa de erro foi de 0.5283, para o K-medóide, 0.5094 e para os clusters baseados em mistura 0.2704. Por tanto concluímos que dentre os  métodos testados aquele que obteve uma melhor representação dos grupos originais de peixes foi o de clusters baseados em mistura, já que sua taxa de erro foi a menor observada dentre as outras.
+
